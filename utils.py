@@ -54,6 +54,12 @@ def normxcorr2(template, image, mode="full"):
 ## Take in the rotation angle of a defect and create defect mask array
 def maskTemplate(phi0, ra=5, nBrushes=2, dispComp=False, dispResults=False, saveMask=True):
 
+	# Create copy of input angle for output name
+	phiIn = phi0
+
+	# Offset in angle to fix the phi such that white brushes line up with angle
+	phi0 = (phi0 + 113)%180
+
 	# Conversion factor degrees to radians
 	dtoR = np.pi/180
 
@@ -166,13 +172,13 @@ def maskTemplate(phi0, ra=5, nBrushes=2, dispComp=False, dispResults=False, save
 	if saveMask:
 
 		# Whole part of angle
-		whole = str(phi0).split('.')[0].zfill(3)
+		whole = str(phiIn).split('.')[0].zfill(3)
 
 		# Decimal part of angle
-		decimal = str(phi0).split('.')[-1]
+		decimal = str(phiIn).split('.')[-1]
 
 		# Create name for output image
-		maskPath = 'masks/' + whole + '_' + decimal + '.png'
+		maskPath = 'masks/r_' + str(ra) + '_a_' + whole + '_' + decimal + '.png'
 
 		# Numpy array to image
 		maskIm = Image.fromarray(np.uint8(bothT))
@@ -197,10 +203,10 @@ def dot_prod(array1, array2):
 
 
 ## Find the best angle the defect correlates to
-def find_angle(defectZoom):
+def find_angle(defectZoom, ra):
 
-	# Where masks are stored
-	maskPaths = glob.glob('masks/*.png')
+	# Where masks are stored, check for those of the correct radius
+	maskPaths = glob.glob('masks/r_' + str(ra) + '_a_*.png')
 
 	# Storing totals
 	tots = []
@@ -212,7 +218,7 @@ def find_angle(defectZoom):
 	for i, maskPath in enumerate(maskPaths):
 
 		# String describing angle
-		anStr = maskPath.split('\\')[-1].split('.')[0]
+		anStr = maskPath.split('\\')[-1].split('.')[0][-5:]
 
 		# Find angle and add to array
 		angles.append(float(anStr.replace('_', '.')))
@@ -232,19 +238,56 @@ def find_angle(defectZoom):
 	# Get best angle from list
 	bestAngle = angles[index]
 
-	# # Showing defect and selected template
-	# plt.imshow(defectZoom, cmap='gray')
-	# plt.show()
-	# plt.imshow(Image.open(maskPaths[index]), cmap='gray')
-	# plt.show()
+	if True:
 
-	# # Showing plot of totals vs angles
-	# plt.plot(angles, tots)
-	# plt.scatter(bestAngle, np.amax(tots), color='r')
-	# plt.show()
+		# Showing defect and selected template
+		plt.imshow(defectZoom, cmap='gray')
+		plt.show()
+		plt.imshow(Image.open(maskPaths[index]), cmap='gray')
+		plt.show()
+
+		# Showing plot of totals vs angles
+		plt.plot(angles, tots)
+		plt.scatter(bestAngle, np.amax(tots), color='r')
+		plt.show()
 
 	# Return result
 	return bestAngle
+
+
+
+# Add a border to a numpy array
+def add_border(array, width, value=0):
+
+	# Matrix to store output
+	mat = []
+
+	# Create every row
+	for i in range(len(array) + 2*width):
+
+		# List to store values in a row
+		row = []
+
+		# Go through every column in row
+		for j in range(len(array[0]) + 2*width):
+
+			# If it exceeds the dimensions of the original
+			if i - width < 0 or j - width < 0 or i - width >= len(array) or j - width >= len(array[0]):
+
+				# Add the value specified
+				row.append(value)
+
+			# Otherwise copy over the image
+			else:
+
+				# Image pixel value
+				row.append(array[i-width][j-width])
+
+		# Append the row as numpy array to final matrix
+		mat.append(np.asarray(row))
+
+	# Return the matrix as numpy array
+	return np.asarray(mat)
 
 
 
@@ -256,55 +299,118 @@ def image_angles(imPath):
 	# Get path to label file corresponding to image
 	labelPath = imPath.replace('images', 'labels').replace('tif', 'txt')
 
-	# Create path to output label file
-	outPath = labelPath.replace('input', 'output')
+	# If the corresponding label file exists,
+	if len(glob.glob(labelPath)) == 1:
 
-	# Read the image as numpy array
-	image = np.asarray(Image.open(imPath))
+		# Create path to output label file
+		outPath = labelPath.replace('input', 'output')
 
-	# Read labels as numpy array
-	labelMat = np.loadtxt(labelPath)
+		# Read the image as numpy array
+		image = np.asarray(Image.open(imPath))
 
-	# Output matrix
-	outMat = []
+		# Read labels as numpy array
+		labelMat = np.loadtxt(labelPath)
 
-	# Get semi width and length of mask
-	testMask = np.asarray(Image.open(glob.glob('masks/*.png')[0]))
-	sw = (len(testMask) - 1)//2
+		# Output matrix
+		outMat = []
 
-	# For every angle in the defect
-	for i, defect in enumerate(labelMat):
+		# Pad numpy image with extra 0 values
+		imageFat = add_border(image, 100, 0)
 
-		# Find center of detected defect
-		xc = int(defect[1]*len(image[0]))
-		yc = int(defect[2]*len(image))
+		# Store whether it is 0 or something else
+		zeros = 0
+		nonzeros = 0
 
-		# Slice out the defect
-		defArray = image[yc - sw:yc + sw+1, xc - sw:xc + sw+1]
+		# For every angle in the defect
+		for i, defect in enumerate(labelMat):
 
-		# Get mean value
-		mean = np.mean(defArray)
+			# If the length of the 'defect' label is nonzero
+			if not np.isscalar(defect) and len(defect) > 0:
 
-		# Increase contrast
-		defArray = (defArray - mean)*100 + mean
+				# Find center of detected defect
+				xc = int(defect[1]*image.shape[1])
+				yc = int(defect[2]*image.shape[0])
 
-		# Get the best defect angle
-		bestAngle = find_angle(defArray)
+				## Now find the nearest neighbour to this defect
+				# If at least two defects exist
+				if len(labelMat) >= 2:
 
-		# Output matrix line
-		line = np.copy(defect)
+					# Create a temporary minDist2
+					minDist2 = 1e20
 
-		# Now add the angle
-		line = np.append(line, bestAngle)
+					# Go through every defect
+					for j, defectPair in enumerate(labelMat):
 
-		# Add this to the output array
-		outMat.append(line)
+						# If the defect is not the same as the pair
+						if i != j:
 
-	# Convert outarray to numpy array
-	outMat = np.asarray(outMat)
+							# Also, if the length of the acquired defect is correct
+							if not np.isscalar(defectPair) and len(defectPair) > 0:
 
-	# Save output matrix as txt
-	np.savetxt(outPath, outMat)
+								# Find center of detected defect pair
+								xcp = int(defectPair[1]*image.shape[1])
+								ycp = int(defectPair[2]*image.shape[0])
+
+								# Find the distance squared
+								d2 = (xcp - xc)**2 + (ycp - yc)**2
+
+								# If this is lesser than the last minimum
+								if d2 < minDist2:
+
+									# Set this as the new minimum distance squared
+									minDist2 = d2
+
+								# Clear variables
+								xcp, ycp, d2 = None, None, None
+
+				# Acquired radius of mask template
+				ra = int(np.sqrt(minDist2)/4) + 2
+
+				# If the radius is too big, bring it down to 100
+				if ra > 100:
+					ra = 100
+
+				# Slice out the defect (including pad)
+				defArray = imageFat[yc - ra + 100:yc + ra + 101, xc - ra + 100:xc + ra + 101]
+
+				# Get mean value
+				mean = np.mean(defArray)
+
+				# Increase contrast
+				defArray = (defArray - mean)*100 + mean
+
+				# Get the best defect angle
+				bestAngle = find_angle(defArray, ra)
+
+				# Store as zero if zero, otherwise if not
+				if int(bestAngle) <= 90:
+					zeros = zeros + 1
+				else:
+					nonzeros = nonzeros + 1
+
+				# Output matrix line
+				line = np.copy(defect)
+
+				# Now add the angle
+				line = np.append(line, bestAngle)
+
+				# Add this to the output array
+				outMat.append(line)
+
+		# Convert outarray to numpy array
+		outMat = np.asarray(outMat)
+
+		# Save output matrix as txt
+		np.savetxt(outPath, outMat)
+
+		# Display how many were zeros
+		print('Under 90: ' + str(zeros) + ', Over 90: ' + str(nonzeros))
+		if (zeros+nonzeros) > 0:
+			print('Ratio (90/all): ' + str(zeros/(zeros+nonzeros)))
+
+		# Pause if it is too big
+		if (zeros+nonzeros) > 0 and zeros/(zeros+nonzeros) > 0.5:
+			input('Very big')
 
 
 

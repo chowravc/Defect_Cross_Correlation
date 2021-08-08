@@ -19,9 +19,6 @@ print('Imported packages.')
 
 def create_cc_masks():
 
-	# 'Radius' of the defect ((mask dimension - 1)/2)
-	ra = 10
-
 	# Number of brushes in defect template
 	# (4 for crossed polarizers, 2 for decrossed)
 	nBrushes = 2
@@ -56,11 +53,16 @@ def create_cc_masks():
 	# Store various angles in the range
 	tAngle = np.linspace(phiMin, phiMax, num=nMasks)
 
-	# Create a mask for each 
-	for i, phi0 in enumerate(tAngle):
+	# Create a mask of every radius between 1 and 100
+	for ra in range(1, 101):
 
-		# Generate a mask
-		maskTemplate(phi0, ra=ra, nBrushes=nBrushes, dispComp=dispComp, dispResults=dispResults, saveMask=saveMask)
+		print(str(ra)+'%')
+
+		# Create a mask for each angle
+		for i, phi0 in enumerate(tAngle):
+
+			# Generate a mask
+			maskTemplate(phi0, ra=ra, nBrushes=nBrushes, dispComp=dispComp, dispResults=dispResults, saveMask=saveMask)
 
 
 
@@ -82,6 +84,8 @@ def main():
 
 	# Perform angle extraction on each image
 	for i, imagePath in enumerate(imagePaths):
+
+		imagePath = 'input/images/r2_4000.tif'
 
 		# Extract angles
 		image_angles(imagePath)
